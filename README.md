@@ -1,0 +1,1 @@
+在写readme之前，先完成requirements.txt文件
