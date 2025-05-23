@@ -6,16 +6,6 @@ import cv2
 from tqdm import tqdm
 import zlib
 
-def xor_chunks(chunks):
-    max_len = max(len(c) for c in chunks)
-    padded = [c.ljust(max_len, b'\x00') for c in chunks]
-    parity = bytearray(max_len)
-    for b in zip(*padded):
-        for i, byte in enumerate(b):
-            parity[i] ^= byte
-    return bytes(parity)
-
-
 def read_file_to_chunks(filename, chunk_size):
     with open(filename, 'rb') as f:
         data = f.read()
@@ -23,58 +13,25 @@ def read_file_to_chunks(filename, chunk_size):
     print(f"[INFO] 文件大小: {len(data)} 字节, 被切分为 {len(chunks)} 块")
     return chunks
 
-def encode_chunk_to_qr(chunk, index, total, is_parity=False):
-    import base64, struct, zlib, qrcode
-    import numpy as np
-
-    # 构造帧头 + CRC
-    header = struct.pack("IIB", total, index, int(is_parity))  # 9字节
+def encode_chunk_to_qr(chunk, index, total):
+    header = struct.pack("II", total, index)
     data = header + chunk
-    crc = struct.pack("I", zlib.crc32(data))                   # 4字节
-    payload = base64.b64encode(data + crc)                     # 总长度变长
+    crc = struct.pack("I", zlib.crc32(data))
+    payload = base64.b64encode(data + crc)
 
-    qr = qrcode.QRCode(
-        version=10,  #  固定版本
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4
-    )
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L)
     qr.add_data(payload)
-    qr.make(fit=False)
-
+    qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    return np.array(img)[:, :, ::-1]  # 转换为 OpenCV BGR 格式
+    return np.array(img)[:, :, ::-1]
 
-
-
-def generate_qr_frames_with_fec(file_path, chunk_size, group_size=4):
+def generate_qr_frames(file_path, chunk_size):
     chunks = read_file_to_chunks(file_path, chunk_size)
-    total_data_chunks = len(chunks)
-    num_groups = (total_data_chunks + group_size - 1) // group_size
-    total_frames = total_data_chunks + num_groups  # 数据帧 + 校验帧
-
+    total = len(chunks)
     frames = []
-    frame_index = 1
-
-    for i in tqdm(range(0, total_data_chunks, group_size), desc="生成二维码帧"):
-        group = chunks[i:i + group_size]
-        parity = xor_chunks(group)
-        all_chunks = group + [parity]
-
-        for j, chunk in enumerate(all_chunks):
-            is_parity = (j == len(all_chunks) - 1)
-            qr_frame = encode_chunk_to_qr(
-                chunk=chunk,
-                index=frame_index,
-                total=total_frames,
-                is_parity=is_parity
-            )
-            frames.append(qr_frame)
-            frame_index += 1
-
-    print(f"[INFO] 生成二维码帧总数: {total_frames}")
+    for i, chunk in enumerate(tqdm(chunks, desc="生成二维码")):
+        frames.append(encode_chunk_to_qr(chunk, i + 1, total))
     return frames
-
 
 def resize_frame(frame, scale):
     h, w = frame.shape[:2]
@@ -94,7 +51,7 @@ def get_screen_size():
         pass
     return screen_w, screen_h
 
-def play_qr_frames(frames, fps=10):
+def play_qr_frames(frames, fps=8):
     if not frames:
         print("[ERROR] 没有可播放的帧")
         return
@@ -162,6 +119,6 @@ if __name__ == '__main__':
     draw.ellipse((50, 50, 150, 150), fill='black')
     img.save('test_image.png')
 
-    frames = generate_qr_frames_with_fec("test_image.png", chunk_size=72)
+    frames = generate_qr_frames("test_image.png", chunk_size=72)
 
     play_qr_frames(frames)
