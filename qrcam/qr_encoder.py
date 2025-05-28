@@ -5,7 +5,7 @@ import cv2
 from tqdm import tqdm
 import zlib
 import json
-from config import MISSING_FRAME_PATH, CHUNK_SIZE, FPS, FPS_RESEND
+from config import MISSING_FRAME_PATH, CHUNK_SIZE, FPS, FPS_RESEND, FILE_PATH
 
 
 def load_missing_frames(path="missing_frames.json"):
