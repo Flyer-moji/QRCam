@@ -5,20 +5,22 @@ import cv2
 from tqdm import tqdm
 import zlib
 import json
-import time
+from config import MISSING_FRAME_PATH, CHUNK_SIZE, FPS, FPS_RESEND
 
 
 def load_missing_frames(path="missing_frames.json"):
+    # 加载缺失帧列表
     try:
         with open(path, "r") as f:
             missing = json.load(f)  # 直接解析JSON数组
-        print(f"[INFO] 加载缺失帧列表: {missing}")
+        print(f"[INFO] 加载缺失帧列表")
         return sorted(set(missing))
     except Exception as e:
         print(f"[WARN] 无法加载缺失帧列表: {e}")
         return []
 
 def read_file_to_chunks(filename, chunk_size):
+    # 读取文件并按块切分
     with open(filename, 'rb') as f:
         data = f.read()
     chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
@@ -26,28 +28,30 @@ def read_file_to_chunks(filename, chunk_size):
     return chunks
 
 def encode_chunk_to_qr(chunk, index, total):
+    # 编码块为二维码
     header = struct.pack("II", total, index)
     data = header + chunk
-    crc = struct.pack("I", zlib.crc32(data))
-    payload = base64.b64encode(data + crc)
+    crc = struct.pack("I", zlib.crc32(data))#CRC32 校验值
+    payload = base64.b64encode(data + crc)#Base64 编码
 
-    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L)
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L)# L=7%
     qr.add_data(payload)
-    qr.make(fit=True)
+    qr.make(fit=True)#自适应二维码大小
     img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
     img_cv = np.array(img)
     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
-    return img_cv.copy()
+    return img_cv.copy()#BGR格式，np.uint8 类型
 
 def generate_qr_frames(file_path, chunk_size, selected_indices=None):
+    # 生成完整帧和缺失帧的二维码
     chunks = read_file_to_chunks(file_path, chunk_size)
     total = len(chunks)
-    frames = []
+    frames = []#列表，元素是帧的二维码
 
-    if selected_indices is None:
+    if selected_indices is None:# 未指定帧编号，则播放全部
         selected_indices = range(1, total + 1)
 
-    for i in tqdm(selected_indices, desc="生成缺失帧二维码"):
+    for i in tqdm(selected_indices, desc="生成二维码"):
         if 1 <= i <= total:
             frames.append(encode_chunk_to_qr(chunks[i - 1], i, total))
         else:
@@ -59,11 +63,11 @@ def resize_frame(frame, scale):
     scale = max(min(scale, 1.0), 0.05)
     return cv2.resize(frame, (int(w * scale), int(h * scale)))
 
-def play_full_then_missing(full_frames, chunks, missing_frame_path, fps=12):
+def play_full_then_missing(full_frames, chunks, missing_frame_path, fps, fps_resend):
     window_name = "QR Video"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
-    # 获取屏幕分辨率（优先tkinter）
+    # 获取屏幕分辨率，适配屏幕大小
     screen_w, screen_h = 1920, 1080
     try:
         import tkinter as tk
@@ -79,7 +83,8 @@ def play_full_then_missing(full_frames, chunks, missing_frame_path, fps=12):
     scale_h = (screen_h * 0.9) / frame_h
     scale = min(scale_w, scale_h, 1.0)
 
-    delay = int(1000 / fps)
+    delay = int(1000 / fps)# 控制帧率
+    delay_resend = int(1000 / fps_resend)
 
     # Step 1: 播放完整帧
     first_frame = resize_frame(full_frames[0].copy(), scale)
@@ -102,12 +107,12 @@ def play_full_then_missing(full_frames, chunks, missing_frame_path, fps=12):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         resized = resize_frame(annotated, scale)
         cv2.imshow(window_name, resized)
-        key = cv2.waitKey(delay) & 0xFF
+        key = cv2.waitKey(delay) & 0xFF #控制帧率
         if key == 27:
             print("[INFO] 用户中止")
             cv2.destroyAllWindows()
             return
-        elif key == 32:
+        elif key == 32: #空格
             print("[INFO] 重置播放完整帧")
             i = 0
             continue
@@ -117,39 +122,35 @@ def play_full_then_missing(full_frames, chunks, missing_frame_path, fps=12):
     # Step 2: 播放缺失帧（循环扫描json实时加载）
     print("[INFO] 完整帧播放结束，开始实时播放缺失帧")
     total = len(chunks)
-    while load_missing_frames("missing_frames.json"):
+    while True:
+        print("---------")
         missing_indices = load_missing_frames("missing_frames.json")
-        print(f"[INFO] 加载到 {len(missing_indices)} 个缺失帧")
-        if not missing_indices:
-            print("[INFO] 当前无缺失帧，等待更新...")
-            time.sleep(1)
-            continue
 
-        print(f"[INFO] 播放缺失帧：{missing_indices}")
+        if not missing_indices:  # 空列表或 None，都退出
+            print("[INFO] 缺失帧已全部补齐，退出循环")
+            break
+
+        print(f"[INFO] 加载到 {len(missing_indices)} 个缺失帧")
+
+        print(f"[INFO] 播放缺失帧：{missing_indices[:10]}... ...")
         for idx in missing_indices:
             if 1 <= idx <= total:
                 frame = encode_chunk_to_qr(chunks[idx - 1], idx, total)
                 cv2.putText(frame, f"Missing Frame #{idx}", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 1)
                 resized = resize_frame(frame, scale)
                 cv2.imshow(window_name, resized)
-                key = cv2.waitKey(150) & 0xFF
+                key = cv2.waitKey(delay_resend) & 0xFF
                 if key == 27:
                     print("[INFO] 用户中止")
                     cv2.destroyAllWindows()
                     return
             else:
                 print(f"[WARN] 跳过无效帧 {idx}")
-        time.sleep(0.1)
+
 
 if __name__ == '__main__':
 
-    FILE_PATH = "D:/1.png"
-    MISSING_FRAME_PATH = "missing_frames.json"
-    CHUNK_SIZE = 220
-    FPS = 13
-
-
     full_frames = generate_qr_frames(FILE_PATH, CHUNK_SIZE)
     chunks = read_file_to_chunks(FILE_PATH, CHUNK_SIZE)
-    play_full_then_missing(full_frames, chunks, MISSING_FRAME_PATH, fps=FPS)
+    play_full_then_missing(full_frames, chunks, MISSING_FRAME_PATH, fps=FPS, fps_resend=FPS_RESEND)
