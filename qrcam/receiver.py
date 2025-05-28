@@ -1,4 +1,5 @@
 # receiver.py
+import json
 import cv2
 import base64, struct, zlib
 from collections import OrderedDict
@@ -28,6 +29,14 @@ def buffer_frame(received_dict, frame_id, data_chunk):
     # 如果没收到过，缓存；如果收到过，保持旧数据（避免覆盖）
     if frame_id not in received_dict:
         received_dict[frame_id] = data_chunk
+def update_missing_frames_file(total, received_dict, filename="missing_frames.json"):
+    if total is None:
+        return
+    missing = [i for i in range(1, total + 1) if i not in received_dict]
+    with open(filename, 'w') as f:
+        json.dump(missing, f, indent=2)
+    print(f"[INFO] 实时更新缺失帧文件，当前缺失帧数: {len(missing)}，写入 {filename}")
+
 
 def reconstruct_file(received_dict):
     file_bytes = b""
@@ -45,7 +54,7 @@ def save_file(filename, file_bytes):
     print(f"[INFO] 文件已保存到 {filename}")
 
 def main():
-    cap = cv2.VideoCapture(2)
+    cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 30)
@@ -57,7 +66,7 @@ def main():
     received_dict = OrderedDict()
     total = None  # 初始化总帧数
     print("[INFO] 摄像头已启动，按 's' 保存文件，按 'q' 退出程序")
-
+    last_write_count = 0  # 记录上次写入文件时的帧缓存数
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -74,6 +83,10 @@ def main():
                     print(f"[INFO] 识别到总帧数: {total}")
                 buffer_frame(received_dict, frame_id, data_chunk)
                 print(f"[INFO] 成功接收帧 {frame_id}，已缓存帧数: {len(received_dict)}/{total}")
+                # 节流写文件：缓存帧数每增加10个，写一次缺失帧文件
+                if len(received_dict) - last_write_count >= 10 or len(received_dict) == total:
+                    update_missing_frames_file(total, received_dict)
+                    last_write_count = len(received_dict)
             else:
                 print("[WARN] CRC校验失败，丢弃此帧")
 
@@ -81,8 +94,11 @@ def main():
         if key == ord('s'):
             print("[INFO] 保存文件请求收到，开始拼接和保存...")
             file_bytes = reconstruct_file(received_dict)
-            save_file("received_output.png", file_bytes)
-        elif key == ord('q'):
+            save_file("receiver/received_output.png", file_bytes)
+            # 保存缺失帧文件，确保最新
+            if total is not None:
+                update_missing_frames_file(total, received_dict)
+        elif key == 27:
             print("[INFO] 退出程序")
             break
 
@@ -90,7 +106,10 @@ def main():
         if total is not None and all(i in received_dict for i in range(1, total + 1)):
             print("[INFO] 所有帧已接收完毕，自动保存文件")
             file_bytes = reconstruct_file(received_dict)
-            save_file("received_output.png", file_bytes)
+            save_file("receiver/received_output.png", file_bytes)
+
+
+            update_missing_frames_file(total, received_dict)
             break
 
     cap.release()
