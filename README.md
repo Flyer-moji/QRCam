@@ -72,11 +72,15 @@ numpy==2.2.6
 
 ## 文件结构
     ```
-    project-root/
+    qrcam/
     ├── qr_encoder.py       # 发送端脚本，负责切分文件、生成二维码并播放
+    ├── config.py           # 配置文件，修改参数
     ├── receiver.py         # 接收端脚本，负责扫码解码、缓存数据和更新缺失帧列表
-    ├── missing_frames.json # 缺失帧列表，由接收端实时维护
-    └── README.md           # 项目说明文档
+    └── missing_frames.json # 缺失帧列表，由接收端实时维护
+      README.md             # 项目说明文档
+      requirements.txt      # 依赖包列表 
+      test.py               # 测试摄像头功能脚本
+      LICENSE               # 许可证
     ```
 ## 注意事项
 - 非真正的 FEC：当前方案基于重传机制，而非在帧内添加冗余数据进行纠错。
